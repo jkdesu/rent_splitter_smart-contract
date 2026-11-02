@@ -109,6 +109,40 @@ When the last roommate pays, the contract sends the pot to the landlord. Check t
 
 Orange Remix buttons send a transaction. Blue buttons only read state.
 
+## Events: writing to the chain vs. listening
+
+Calling a function is only half of the story. There are two actions:
+
+1. **Send a transaction** — a roommate calls `payRent`, or the landlord calls `triggerRefund`. That writes new state on the blockchain (costs gas).
+2. **Listen** — a backend, indexer, or UI watches the chain for what just happened. People sometimes call this “reading from the contract.”
+
+You can read in two ways:
+
+- A **view / read function** (`checkAllPaid`, `getRoommateDetails`, `getContractBalance`): you ask the contract for its current state.
+- An **event**: the function emits a log while it runs. Off-chain code subscribes to that log and collects business data without polling every storage slot.
+
+Same idea as a token `mint`: if you mint 20 tokens, `Transfer` (or a custom `Minted`) event lets the backend record who received them, how many, and when. RentSplitter uses the same pattern for rent collection. The contract is the source of truth; events are the feed a product would listen to for payments, late fees, releases, and refunds.
+
+In Remix, open a successful transaction → **logs**. Those entries are the events below.
+
+### Events by function
+
+| Function | Event | Why it is emitted (data a backend could collect) |
+| --- | --- | --- |
+| constructor | `LogContractCreated(landlord, totalRent, roommateCount)` | New household / lease was created. Index landlord, rent amount, and how many payers. |
+| `payRent()` | `LogPaymentMade(roommate, amount, timestamp)` | A roommate paid. Record payer, amount, and time for receipts and ledgers. |
+| `payRent()` (after grace period) | `LogLateFeeApplied(roommate, lateFee)` | Extra 5% was charged. Accounting and “who was late” notifications. |
+| `payRent()` (past due date) | `LogPhaseChanged(Active → GracePeriod)` | Cycle moved into grace. UI can show “past due, grace window open.” |
+| `_releaseFundsToLandlord()` (when the last roommate pays) | `LogRentReleased(landlord, amount, cycleNumber)` | Full pot went to the landlord. Confirm payout for that month. |
+| `_releaseFundsToLandlord()` | `LogPhaseChanged` then `LogCycleReset(cycleNumber, newDueDate)` | Cycle completed and the next 30-day period started. |
+| `triggerRefund()` | `LogRefundProcessed(roommate, amount)` | Each paying roommate was reimbursed because the cycle failed. |
+| `triggerRefund()` | `LogPhaseChanged` then `LogCycleReset` | Failed cycle closed; next cycle opened. |
+| `emergencyPause()` | `LogPhaseChanged(..., Setup)` | Landlord flagged an emergency pause. |
+
+View functions (`checkAllPaid`, `currentPhase`, …) do **not** emit events. They only read; they do not send a transaction.
+
+Indexed fields (`landlord`, `roommate`) make it cheap to filter logs, e.g. “all payments from this roommate” or “all releases to this landlord,” which is what a KYC / wallet backend would subscribe to.
+
 ## Cycle parameters
 
 | Parameter | Value |
